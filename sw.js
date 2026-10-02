@@ -1,6 +1,7 @@
 // Service worker: keeps the app files so the app opens offline.
-// Bump VERSION whenever any file listed in SHELL changes; devices then fetch the new files on their next online open.
-const VERSION = 'v1';
+// Bump VERSION whenever any file listed in SHELL changes. A device then fetches the new files the next time
+// the app is opened (or brought back to the front) while online, and the open page reloads itself into them.
+const VERSION = 'v2';
 const CACHE = `answer-key-${VERSION}`;
 const SHELL = ['./', 'index.html', 'app.css', 'app.js', 'store.js', 'crypto.js',
   'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
@@ -16,7 +17,7 @@ self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys()
       .then(keys => Promise.all(keys.filter(k => k.startsWith('answer-key-') && k !== CACHE).map(k => caches.delete(k))))
-      .then(() => self.clients.claim()));
+      .then(() => self.clients.claim()));      // the open page sees a new controller and reloads itself (app.js)
 });
 
 self.addEventListener('fetch', event => {

@@ -10,7 +10,11 @@ const state = {
   key: null,        // AES key, or null until the passphrase is entered
   local: {},        // books on this device: id -> {title, series, order, unit, version, answers}
   book: null,       // the open book: {id, version, book}
-  pad: null,        // number pad on the unit screen: {book, buffer, fresh}
+  shown: null,      // the route now on screen
+  overviewY: null,  // where the overview was scrolled when it was left: {book, y}
+  exerciseFrom: '', // the screen an exercise was opened from, e.g. 'overview:steps-5'
+  afterMount: null, // set by a screen that places the scroll itself
+  reloadPending: false,
   toast: '',
 };
 
@@ -166,7 +170,7 @@ function parse() {
   if (p[0] === 'b' && p[1]) {
     if (p[2] === 'redo') return p[4] ? { view: 'exercise', id: p[1], unit: +p[3], n: +p[4], redo: true } : { view: 'redo', id: p[1] };
     if (p[2] === 'u' && p[4]) return { view: 'exercise', id: p[1], unit: +p[3], n: +p[4], redo: false };
-    return { view: 'unit', id: p[1], unit: p[2] === 'u' ? +p[3] : null };
+    return { view: 'overview', id: p[1], unit: p[2] === 'u' && p[3] ? +p[3] : null };
   }
   return { view: 'books' };
 }
@@ -177,8 +181,12 @@ async function openBook(id) {
 }
 
 async function route() {
+  if (state.reloadPending) return location.reload();      // a new app version is waiting
   const r = parse();
-  if (r.view !== 'unit') state.pad = null;
+  const from = state.shown;
+  if (from && from.view === 'overview') state.overviewY = { book: from.id, y: window.scrollY };
+  if (r.view === 'exercise' && !(from && from.view === 'exercise')) state.exerciseFrom = from ? `${from.view}:${from.id}` : '';
+  state.afterMount = null;
   let screen;
   if (r.view === 'settings') screen = await settingsScreen();
   else if (r.view === 'pass') screen = passScreen();
@@ -186,13 +194,15 @@ async function route() {
   else {
     const book = await openBook(r.id);
     if (!book) return go('#/', true);
-    if (r.view === 'unit') screen = await unitScreen(book, r);
+    if (r.view === 'overview') screen = await overviewScreen(book, r);
     else if (r.view === 'redo') screen = await redoScreen(book);
     else screen = await exerciseScreen(book, r);
     if (!screen) return go(`#/b/${r.id}`, true);
   }
   root.replaceChildren(...screen);      // the previous screen, and any answer on it, leaves the DOM here
-  window.scrollTo(0, 0);
+  state.shown = r;
+  if (state.afterMount) state.afterMount();
+  else window.scrollTo(0, 0);
 }
 
 // ---------- screens ----------
@@ -210,7 +220,7 @@ async function booksScreen() {
     const m = state.local[last.book];
     const where = `${abbr(m.unit)} ${last.unit}` + (last.n ? ` · #${last.n}` : '');
     main.append(h('h2', {}, 'Last used'),
-      h('button', { class: 'btn book primary', onclick: () => go(`#/b/${last.book}/u/${last.unit}` + (last.n ? `/${last.n}` : '')) },
+      h('button', { class: 'btn book primary', onclick: () => { state.overviewY = null; go(last.n ? `#/b/${last.book}/u/${last.unit}/${last.n}` : `#/b/${last.book}`); } },
         h('span', { class: 'book-title' }, m.title), h('span', { class: 'book-sub' }, `Continue at ${where}`)));
   }
   const series = [...new Set(ids.map(id => state.local[id].series))]
@@ -219,7 +229,7 @@ async function booksScreen() {
     main.append(h('h2', {}, s));
     for (const id of ids.filter(i => state.local[i].series === s).sort((a, b) => state.local[a].order - state.local[b].order)) {
       const m = state.local[id];
-      main.append(h('button', { class: 'btn book', onclick: () => go(`#/b/${id}`) },
+      main.append(h('button', { class: 'btn book', onclick: () => { state.overviewY = null; go(`#/b/${id}`); } },
         h('span', { class: 'book-title' }, m.title),
         h('span', { class: 'book-sub' }, `${m.units} ${m.unit}${m.units === 1 ? '' : 's'} · ${m.answers} answers`)));
     }
@@ -239,10 +249,9 @@ function resultClass(r) {
 
 const needsRedo = r => !(r.right && r.sure);
 
-// The last book, unit and exercise. A unit opened without an exercise keeps the exercise number it had.
+// The last book, unit and exercise.
 async function remember(book, unit, n) {
   const pos = (await store.get('kv', 'pos')) || {};
-  if (n == null && pos[book] && pos[book].unit === unit) n = pos[book].n;
   pos[book] = { unit, n };
   await store.put('kv', pos, 'pos');
   await store.put('kv', { book, unit, n }, 'last');
@@ -252,69 +261,94 @@ async function redoList(id) {
   return (await store.byBook('results', id)).filter(needsRedo).sort((a, b) => a.unit - b.unit || a.n - b.n);
 }
 
-async function unitScreen(book, r) {
-  const meta = state.local[book.id];
-  const numbers = book.units.map(u => u.number);
-  if (!state.pad || state.pad.book !== book.id) {
-    const pos = ((await store.get('kv', 'pos')) || {})[book.id];
-    const start = r.unit != null && numbers.includes(r.unit) ? r.unit : pos && numbers.includes(pos.unit) ? pos.unit : numbers[0];
-    state.pad = { book: book.id, buffer: String(start), fresh: true };
-  } else if (r.unit != null && numbers.includes(r.unit) && String(r.unit) !== state.pad.buffer) {
-    state.pad = { book: book.id, buffer: String(r.unit), fresh: true };
-  }
-  const results = new Map((await store.byBook('results', book.id)).map(x => [x.key, x]));
-  const redoCount = [...results.values()].filter(needsRedo).length;
-  const word = meta.unit;
-
-  const display = h('div', { class: 'unit-display' });
-  const info = h('div', { class: 'unit-info' });
-  const grid = h('div', { class: 'grid' });
-
-  function show() {
-    const number = state.pad.buffer === '' ? null : +state.pad.buffer;
-    const unit = book.units.find(u => u.number === number);
-    display.textContent = `${abbr(word)} ${state.pad.buffer || '–'}`;
-    info.replaceChildren();
-    grid.replaceChildren();
-    if (!unit) {
-      info.append(h('p', { class: 'muted' }, number == null ? `Type a ${word} number.` : `No ${word} ${number} in this book.`));
-      return;
-    }
-    history.replaceState(null, '', `#/b/${book.id}/u/${unit.number}`);
-    remember(book.id, unit.number, null);
-    if (unit.title) info.append(h('p', { class: 'unit-title' }, unit.title));
-    if (unit.note) info.append(h('p', { class: 'note' }, renderText(unit.note)));
-    for (const it of unit.items) {
-      const res = results.get(store.exerciseKey(book.id, unit.number, it.n));
-      grid.append(h('button', { class: 'btn ex', 'aria-label': `Exercise ${it.n}`, onclick: () => go(`#/b/${book.id}/u/${unit.number}/${it.n}`) },
-        String(it.n), h('span', { class: `dot ${resultClass(res)}` })));
-    }
-  }
-
-  function press(key) {
-    const pad = state.pad;
-    const max = String(Math.max(...numbers));
-    if (key === 'C') pad.buffer = '';
-    else if (key === '⌫') pad.buffer = pad.buffer.slice(0, -1);
-    else if (pad.fresh || pad.buffer.length >= max.length || +(pad.buffer + key) > +max) pad.buffer = key === '0' ? '' : key;
-    else pad.buffer += key;
-    pad.fresh = false;
-    show();
-  }
-
-  const pad = h('div', { class: 'pad' });
-  for (const key of ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', '⌫']) {
-    pad.append(h('button', { class: 'btn key', 'aria-label': key === 'C' ? 'Clear' : key === '⌫' ? 'Delete' : key, onclick: () => press(key) }, key));
-  }
-  show();
+// Header and tabs shared by a book's Overview and Redo screens.
+function bookTop(book, active, redoCount, tools) {
+  const tab = (name, label, hash) => h('button', {
+    class: `tab${active === name ? ' on' : ''}`, role: 'tab', 'aria-selected': String(active === name),
+    onclick: () => { if (active !== name) go(hash, true); },
+  }, label);
   return [
     h('header', { class: 'top' },
       h('button', { class: 'link', onclick: () => go('#/', true) }, '‹ Books'),
-      h('span', { class: 'top-title' }, meta.title),
-      h('button', { class: 'link', onclick: () => go(`#/b/${book.id}/redo`) }, `Redo (${redoCount})`)),
-    h('main', { class: 'main' }, display, info, grid),
-    h('footer', { class: 'bottom' }, pad),
+      h('span', { class: 'top-title end' }, state.local[book.id].title)),
+    h('div', { class: 'bar' },
+      h('div', { class: 'tabs', role: 'tablist' },
+        tab('overview', 'Overview', `#/b/${book.id}`), tab('redo', `Redo (${redoCount})`, `#/b/${book.id}/redo`)),
+      ...(tools || [])),
   ];
+}
+
+const RESULT_WORDS = { '': 'not tried', right: 'right and sure', unsure: 'right but unsure', wrong: 'wrong' };
+
+// Every unit of the book with one button per exercise. Numbers and titles only: no answer text is rendered here.
+async function overviewScreen(book, r) {
+  const word = state.local[book.id].unit;
+  const results = new Map((await store.byBook('results', book.id)).map(x => [x.key, x]));
+  const flags = new Set((await store.all('flags')).filter(f => f.book === book.id).map(f => f.key));
+  const pos = ((await store.get('kv', 'pos')) || {})[book.id];
+  const redoCount = [...results.values()].filter(needsRedo).length;
+  const blocks = new Map();
+
+  const main = h('main', { class: 'main overview' },
+    h('p', { class: 'legend' },
+      h('span', {}, h('span', { class: 'dot right' }), ' right'),
+      h('span', {}, h('span', { class: 'dot unsure' }), ' unsure'),
+      h('span', {}, h('span', { class: 'dot wrong' }), ' wrong'),
+      h('span', {}, h('span', { class: 'flagmark' }), ' flagged')));
+  for (const unit of book.units) {
+    const head = h('div', { class: 'block-head' },
+      h('h3', {}, `${abbr(word)} ${unit.number}` + (unit.title ? ` · ${unit.title}` : '')));
+    const note = h('p', { class: 'note', hidden: true });
+    if (unit.note) {
+      const btn = h('button', { class: 'link note-btn', 'aria-expanded': 'false' }, 'Note');
+      btn.addEventListener('click', () => {
+        if (!note.hasChildNodes()) note.append(renderText(unit.note));
+        note.hidden = !note.hidden;
+        btn.setAttribute('aria-expanded', String(!note.hidden));
+      });
+      head.append(btn);
+    }
+    const grid = h('div', { class: 'grid' });
+    for (const it of unit.items) {
+      const key = store.exerciseKey(book.id, unit.number, it.n);
+      const res = resultClass(results.get(key));
+      const flagged = flags.has(key);
+      const last = !!pos && pos.unit === unit.number && pos.n === it.n;
+      grid.append(h('button', {
+        class: `btn ex ${res}${flagged ? ' flagged' : ''}${last ? ' last' : ''}`,
+        'aria-label': `${abbr(word)} ${unit.number} exercise ${it.n}, ${RESULT_WORDS[res]}${flagged ? ', flagged' : ''}${last ? ', used last' : ''}`,
+        onclick: () => go(`#/b/${book.id}/u/${unit.number}/${it.n}`),
+      }, String(it.n), h('span', { class: `dot ${res}` })));
+    }
+    const block = h('section', { class: 'block' }, head, note, grid);
+    blocks.set(unit.number, block);
+    main.append(block);
+  }
+
+  // "Go to page": scrolls to the page as it is typed.
+  const status = h('span', { class: 'goto-status', role: 'status' });
+  const input = h('input', { type: 'text', id: 'goto', inputmode: 'numeric', pattern: '[0-9]*', maxlength: '3',
+    autocomplete: 'off', placeholder: `Go to ${word}`, 'aria-label': `Go to ${word}` });
+  input.addEventListener('input', () => {
+    const digits = input.value.replace(/\D/g, '');
+    if (digits !== input.value) input.value = digits;
+    status.textContent = '';
+    if (!digits) return;
+    const block = blocks.get(+digits);
+    if (block) block.scrollIntoView({ block: 'start' });
+    else status.textContent = `No ${word} ${+digits} in this book.`;
+  });
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); });
+
+  state.afterMount = () => {
+    const saved = state.overviewY;
+    if (r.unit != null) history.replaceState(null, '', `#/b/${book.id}`);       // old-style link to one page: use it once
+    if (r.unit != null && blocks.has(r.unit)) blocks.get(r.unit).scrollIntoView({ block: 'start' });
+    else if (saved && saved.book === book.id) window.scrollTo(0, saved.y);        // back from an exercise
+    else if (pos && blocks.has(pos.unit)) blocks.get(pos.unit).scrollIntoView({ block: 'start' });   // opened: the page used last
+    else window.scrollTo(0, 0);
+  };
+  return [...bookTop(book, 'overview', redoCount, [input, status]), main];
 }
 
 function nextInBook(book, unitNumber, n) {
@@ -374,9 +408,15 @@ async function exerciseScreen(book, r) {
     const next = nextInBook(book, unit.number, item.n);
     if (!next) {
       toast('That was the last exercise in this book.');
-      return go(`${base}/u/${unit.number}`, true);
+      return go(base, true);
     }
     go(`${base}/u/${next.unit}/${next.n}`, true);
+  }
+
+  // Back to the screen this exercise was opened from, without leaving a second copy of it in the history.
+  function back() {
+    if (state.exerciseFrom === `${r.redo ? 'redo' : 'overview'}:${book.id}`) history.back();
+    else go(r.redo ? `${base}/redo` : base, true);
   }
 
   buttons.append(
@@ -386,8 +426,7 @@ async function exerciseScreen(book, r) {
   const head = `${meta.title} · ${abbr(meta.unit)} ${unit.number} · #${item.n}` + (unit.title ? ` · ${unit.title}` : '');
   return [
     h('header', { class: 'top' },
-      h('button', { class: 'link', onclick: () => go(r.redo ? `${base}/redo` : `${base}/u/${unit.number}`, true) },
-        r.redo ? '‹ Redo list' : `‹ ${abbr(meta.unit)} ${unit.number}`),
+      h('button', { class: 'link', onclick: back }, r.redo ? '‹ Redo' : '‹ Overview'),
       flagBtn),
     h('main', { class: 'main' }, h('p', { class: 'exercise-head' }, head), answer),
     h('footer', { class: 'bottom' }, buttons),
@@ -405,12 +444,7 @@ async function redoScreen(book) {
       h('span', { class: `dot ${resultClass(x)}` }),
       h('span', {}, `${abbr(meta.unit)} ${x.unit} · #${x.n}` + (unit && unit.title ? ` · ${unit.title}` : ''))));
   }
-  return [
-    h('header', { class: 'top' },
-      h('button', { class: 'link', onclick: () => go(`#/b/${book.id}`, true) }, `‹ ${meta.title}`),
-      h('span', { class: 'top-title' }, `Redo (${list.length})`)),
-    main,
-  ];
+  return [...bookTop(book, 'redo', list.length), main];
 }
 
 async function exportLog() {
@@ -529,9 +563,27 @@ async function start() {
   state.key = await loadKey();
   state.local = (await store.get('kv', 'local')) || {};
   window.addEventListener('hashchange', route);
+  history.scrollRestoration = 'manual';
   await route();
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+  if ('serviceWorker' in navigator) {
+    // When a new service worker takes over, the files on screen are old: reload, but not over an open answer.
+    const hadWorker = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadWorker) return;                               // first install, nothing to replace
+      if (document.querySelector('.answer.shown')) state.reloadPending = true;
+      else location.reload();
+    });
+    navigator.serviceWorker.register('sw.js');
+  }
   updateOnOpen();
+  // An installed app is often resumed, not reloaded: look for a new app version and new books then too.
+  let checked = Date.now();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || Date.now() - checked < 10 * 60 * 1000) return;
+    checked = Date.now();
+    if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistration().then(reg => reg && reg.update()).catch(() => {});
+    updateOnOpen();
+  });
 }
 
 start();
