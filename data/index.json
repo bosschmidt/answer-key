@@ -1,0 +1,20 @@
+{
+ "v": 1,
+ "kdf": {
+  "name": "PBKDF2-SHA256",
+  "iterations": 600000,
+  "salt": "6942ZkNMtprCOQllVTusmQ=="
+ },
+ "check": "tMw+wk+PF6V4Bg8Rmw9WFlE2JspgxGy0Q7p9GwxfI0CJy/wdc/8=",
+ "books": [
+  {
+   "id": "steps-1-extra",
+   "title": "Step 1 Extra",
+   "series": "Steps",
+   "order": 11,
+   "unit": "page",
+   "version": 1,
+   "file": "data/steps-1-extra.enc"
+  }
+ ]
+}
