@@ -15,6 +15,15 @@
    "unit": "page",
    "version": 1,
    "file": "data/steps-1-extra.enc"
+  },
+  {
+   "id": "steps-1-mix",
+   "title": "Step 1 Mix",
+   "series": "Steps",
+   "order": 14,
+   "unit": "page",
+   "version": 1,
+   "file": "data/steps-1-mix.enc"
   }
  ]
 }
