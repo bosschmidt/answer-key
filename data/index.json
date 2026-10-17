@@ -44,6 +44,15 @@
    "file": "data/steps-2-plus.enc"
   },
   {
+   "id": "steps-2-thinking-ahead",
+   "title": "Step 2 Thinking Ahead",
+   "series": "Steps",
+   "order": 23,
+   "unit": "page",
+   "version": 1,
+   "file": "data/steps-2-thinking-ahead.enc"
+  },
+  {
    "id": "steps-2-mix",
    "title": "Step 2 Mix",
    "series": "Steps",
