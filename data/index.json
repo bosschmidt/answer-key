@@ -26,6 +26,15 @@
    "file": "data/steps-1-mix.enc"
   },
   {
+   "id": "steps-2",
+   "title": "Step 2",
+   "series": "Steps",
+   "order": 20,
+   "unit": "page",
+   "version": 1,
+   "file": "data/steps-2.enc"
+  },
+  {
    "id": "steps-2-extra",
    "title": "Step 2 Extra",
    "series": "Steps",
