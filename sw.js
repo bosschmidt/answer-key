@@ -1,7 +1,7 @@
 // Service worker: keeps the app files so the app opens offline.
 // Bump VERSION whenever any file listed in SHELL changes. A device then fetches the new files the next time
 // the app is opened (or brought back to the front) while online, and the open page reloads itself into them.
-const VERSION = 'v2';
+const VERSION = 'v3';
 const CACHE = `answer-key-${VERSION}`;
 const SHELL = ['./', 'index.html', 'app.css', 'app.js', 'store.js', 'crypto.js',
   'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];

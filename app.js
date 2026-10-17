@@ -386,8 +386,23 @@ async function exerciseScreen(book, r) {
   let sure = null;
   let armedAt = 0;
 
+  // Time spent on the position: counts up from the moment this exercise appears, stops at the reveal.
+  const startedAt = Date.now();
+  let seconds = null;
+  const timer = h('span', { class: 'timer', 'aria-label': 'time on this exercise' }, '0:00');
+  const elapsed = () => Math.floor((Date.now() - startedAt) / 1000);
+  const clock = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  let tick = setInterval(() => {
+    if (!timer.isConnected) { clearInterval(tick); tick = null; return; }   // the screen changed
+    timer.textContent = clock(elapsed());
+  }, 1000);
+
   function reveal(isSure) {
     sure = isSure;
+    if (tick) { clearInterval(tick); tick = null; }
+    seconds = elapsed();
+    timer.textContent = clock(seconds);
+    timer.classList.add('done');
     answer.replaceChildren(renderText(item.answer));      // the only place an answer enters the DOM
     answer.classList.add('shown');
     armedAt = Date.now() + 400;                             // a second tap in the same spot must not mark it
@@ -399,7 +414,7 @@ async function exerciseScreen(book, r) {
   async function mark(right) {
     if (Date.now() < armedAt) return;
     armedAt = Infinity;
-    await store.logAttempt(book.id, unit.number, item.n, sure, right, stamp());
+    await store.logAttempt(book.id, unit.number, item.n, sure, right, stamp(), seconds);
     if (r.redo) {
       const list = await redoList(book.id);
       const next = list.find(x => x.unit > unit.number || (x.unit === unit.number && x.n > item.n));
@@ -427,6 +442,7 @@ async function exerciseScreen(book, r) {
   return [
     h('header', { class: 'top' },
       h('button', { class: 'link', onclick: back }, r.redo ? '‹ Redo' : '‹ Overview'),
+      timer,
       flagBtn),
     h('main', { class: 'main' }, h('p', { class: 'exercise-head' }, head), answer),
     h('footer', { class: 'bottom' }, buttons),

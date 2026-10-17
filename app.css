@@ -102,6 +102,8 @@ input#goto { width: 7.4em; min-height: 44px; padding: 8px 10px; font-size: 17px;
 
 /* Exercise */
 .exercise-head { margin: 0; color: var(--muted); font-size: 1rem; }
+.timer { color: var(--muted); font-weight: 600; font-variant-numeric: tabular-nums; text-align: center; }
+.timer.done { color: var(--ink); }
 .answer { flex: 1; padding: 8px 0; font-size: 1.5rem; line-height: 1.5; overflow-wrap: anywhere; }
 .answer img { display: block; max-width: 100%; height: auto; margin: 8px 0; border-radius: 6px; background: #fff; }
 .row { display: flex; align-items: center; gap: 12px; text-align: left; font-weight: 500; }

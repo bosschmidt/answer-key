@@ -39,9 +39,9 @@ export const byBook = (store, book) => run(store, 'readonly', s => s.index('book
 
 export const exerciseKey = (book, unit, n) => `${book}|${unit}|${n}`;
 
-// One attempt: appended to the log, and kept as the exercise's last result.
-export async function logAttempt(book, unit, n, sure, right, at) {
-  const entry = { book, unit, n, sure, right, at };
+// One attempt: appended to the log, and kept as the exercise's last result. `seconds` = time until the reveal.
+export async function logAttempt(book, unit, n, sure, right, at, seconds) {
+  const entry = { book, unit, n, sure, right, at, seconds };
   await put('attempts', entry);
   await put('results', { key: exerciseKey(book, unit, n), ...entry });
 }
